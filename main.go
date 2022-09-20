@@ -18,6 +18,8 @@ func errf(format string, args ...interface{}) {
 func main() {
 	sep := flag.String("sep", ".", "bucket separator")
 	verbose := flag.Bool("v", false, "verbose output")
+	delete := flag.Bool("d", false, "delete key")
+	filepath := flag.Bool("f", false, "Read new value from file")
 	tree := flag.Bool("tree", false, "dump bucket tree")
 	flag.Parse()
 	if flag.NArg() < 1 {
@@ -45,6 +47,8 @@ func main() {
 		db:      db,
 		sep:     *sep,
 		verbose: *verbose,
+		delete: *delete,
+		filepath: *filepath,
 	}
 
 	if *tree {
@@ -67,7 +71,11 @@ func main() {
 		// View value for key in bucket
 		bucket := flag.Arg(1)
 		key := flag.Arg(2)
-		err = c.getKey(bucket, key)
+		if c.delete {
+			err = c.deleteKey(bucket, key)
+		} else {
+			err = c.getKey(bucket, key)
+		}
 	case 4:
 		// Set key in bucket
 		bucket := flag.Arg(1)
@@ -87,6 +95,8 @@ func main() {
 type cli struct {
 	db      *bolt.DB
 	verbose bool
+	delete bool
+	filepath bool
 
 	// sep is the bucket name separator
 	sep string
@@ -223,7 +233,39 @@ func (c *cli) setKey(bucketName, keyName, value string) error {
 			}
 		}
 
-		return bucket.Put([]byte(keyName), []byte(value))
+		if c.filepath {
+			filepath := value
+			content, err := os.ReadFile(filepath)
+			if err != nil {
+				return err
+			}
+			return bucket.Put([]byte(keyName), content)
+		} else {
+			return bucket.Put([]byte(keyName), []byte(value))
+		}
+	})
+}
+
+func (c *cli) deleteKey(bucketName, keyName string) error {
+	return c.db.Update(func(tx *bolt.Tx) error {
+		parts := strings.Split(bucketName, c.sep)
+		if len(parts) == 0 {
+			return fmt.Errorf("invalid bucket: %q", parts)
+		}
+ 
+		bucket, err := tx.CreateBucketIfNotExists([]byte(parts[0]))
+		if err != nil {
+			return err
+		}
+ 
+		for _, p := range parts[1:] {
+			bucket, err = bucket.CreateBucketIfNotExists([]byte(p))
+			if err != nil {
+				return err
+			}
+		}
+
+		return bucket.Delete([]byte(keyName))
 	})
 }
 
